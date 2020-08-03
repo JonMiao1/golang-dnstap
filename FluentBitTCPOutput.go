@@ -21,7 +21,7 @@ import (
 	"net"
 	"time"
 
-        "github.com/golang/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 )
 
 // A FluentBitOutput manages a socket connection and sends dnstap
@@ -31,9 +31,7 @@ type FluentBitOutput struct {
 	address       net.Addr
 	wait          chan bool
 	dialer        *net.Dialer
-	timeout       time.Duration
 	retry         time.Duration
-	flushTimeout  time.Duration
 }
 
 // NewFluentBitOutput creates a FluentBitOutput managing a
@@ -44,13 +42,11 @@ func NewFluentBitOutput(address net.Addr) (*FluentBitOutput, error) {
 		address:       address,
 		wait:          make(chan bool),
 		retry:         10 * time.Second,
-		flushTimeout:  5 * time.Second,
 		dialer: &net.Dialer{
 			Timeout: 30 * time.Second,
 		},
 	}, nil
 }
-
 
 // GetOutputChannel returns the channel on which the
 // FluentBitOutput accepts data.
@@ -60,7 +56,6 @@ func (o *FluentBitOutput) GetOutputChannel() chan []byte {
 	return o.outputChannel
 }
 
-
 // RunOutputLoop reads data from the output channel and sends it over
 // a connections to the FluentBitOutput's address, establishing
 // the connection as needed.
@@ -69,14 +64,8 @@ func (o *FluentBitOutput) GetOutputChannel() chan []byte {
 func (o *FluentBitOutput) RunOutputLoop() {
 	var connected bool
 	var err error
+	var conn net.Conn
 	dt := &Dnstap{}
-	// Start with the connection flush timer in a stopped state.
-	// It will be reset by the first Write call on a new connection.
-	conn := &timedConn{
-		timer:   time.NewTimer(0),
-		timeout: o.flushTimeout,
-	}
-	conn.StopTimer()
 
 	defer func() {
 		if conn != nil {
@@ -85,51 +74,40 @@ func (o *FluentBitOutput) RunOutputLoop() {
 		close(o.wait)
 	}()
 
-	for {
-		select {
-		case frame, ok := <-o.outputChannel:
-			if !ok {
-				return
-			}
+	for frame := range o.outputChannel {
 
-			// the retry loop
-			for ;; time.Sleep(o.retry) {
-				if !connected {
-					// connect the socket
-					conn.Conn, err = o.dialer.Dial(o.address.Network(), o.address.String())
-					if err != nil {
-						log.Printf("Dial() failed: %v", err)
-						continue // = retry
-					}
-					connected = true
-				}
-
-				// try writing
-				if err := proto.Unmarshal(frame, dt); err != nil {
-					log.Fatalf("dnstap.FlutnBitOutput: proto.Unmarshal() failed %s\n", err)
-					break
-				}
-				buf, ok := JSONFormat(dt)
-				if !ok {
-					log.Fatalf("dnstap.FluentBitOutput: text format function failed\n")
-					break
-				}
-				if _, err = conn.Write(buf); err != nil {
-					log.Printf("Connection write: net.Conn.Write() failed: %v", err)
-					connected = false
-					conn.Close()
+		// the retry loop
+		for ; ; time.Sleep(o.retry) {
+			if !connected {
+				// connect the socket
+				conn, err = o.dialer.Dial(o.address.Network(), o.address.String())
+				if err != nil {
+					log.Printf("Dial() failed: %v", err)
 					continue // = retry
 				}
-
-				break // success!
+				connected = true
 			}
 
-		case <-conn.timer.C:
-			conn.SetIdle()
-			if !connected {
-				continue
+			// try writing
+			if err := proto.Unmarshal(frame, dt); err != nil {
+				log.Fatalf("dnstap.FluentBitOutput: proto.Unmarshal() failed %s\n", err)
+				break
 			}
+			buf, ok := JSONFormat(dt)
+			if !ok {
+				log.Fatalf("dnstap.FluentBitOutput: text format function failed\n")
+				break
+			}
+			if _, err = conn.Write(buf); err != nil {
+				log.Printf("Connection write: net.Conn.Write() failed: %v", err)
+				connected = false
+				conn.Close()
+				continue // = retry
+			}
+
+			break // success!
 		}
+
 	}
 }
 
