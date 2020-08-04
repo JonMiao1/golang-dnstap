@@ -46,7 +46,7 @@ var (
 	flagQuietText  = flag.Bool("q", false, "use quiet text output")
 	flagYamlText   = flag.Bool("y", false, "use verbose YAML output")
 	flagJSONText   = flag.Bool("j", false, "use verbose JSON output")
-	flagSockText   = flag.Bool("socktext", false, "Write to tcp/unix connection. Data is json formatted. Provide address with -T or -U flag.")
+	flagTextSock   = flag.Bool("textsock", false, "Write to tcp/unix connection. Data is json formatted. Provide address with -T or -U flag.")
 )
 
 func usage() {
@@ -207,8 +207,8 @@ func addSockOutputs(mo *mirrorOutput, network string, addrs stringList) error {
 			return err
 		}
 		switch {
-		case *flagSockText:
-			o, err := dnstap.NewFluentBitOutput(naddr)
+		case *flagTextSock:
+			o, err := dnstap.NewTextSockOutput(naddr)
 			if err != nil {
 				return err
 			}

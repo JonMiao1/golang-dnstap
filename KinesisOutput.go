@@ -34,6 +34,8 @@ type KinesisOutput struct {
 	wait          chan bool
 	client        *kinesis.Kinesis
 	streamname    string
+	//PartitionKey is a public changeable value, used for sending records to AWS. Defaults to "key1"
+	PartitionKey  string
 }
 
 // NewKinesisOutput creates a KinesisOutput writing dnstap data to the given aws client
@@ -48,6 +50,7 @@ func NewKinesisOutput(streamname string, region string, format TextFormatFunc) (
 	o.outputChannel = make(chan []byte, outputChannelSize)
 	o.wait = make(chan bool)
 	o.streamname = streamname
+	o.PartitionKey = "key1"
 
 	var s *session.Session
 	if region != "" {
@@ -84,21 +87,22 @@ func (o *KinesisOutput) RunOutputLoop() {
 	for frame := range o.outputChannel {
 		if err := proto.Unmarshal(frame, dt); err != nil {
 			log.Fatalf("dnstap.TextOutput: proto.Unmarshal() failed: %s\n", err)
-			break
+			continue
 		}
 		buf, ok := o.format(dt)
 		if !ok {
 			log.Fatalf("dnstap.TextOutput: text format function failed\n")
-			break
+			continue
 		}
 		//Send buf to kinesis
 		_, err := o.client.PutRecord(&kinesis.PutRecordInput{
 			Data:         buf,
 			StreamName:   aws.String(o.streamname),
-			PartitionKey: aws.String("key1"),
+			PartitionKey: aws.String(o.PartitionKey),
 		})
 		if err != nil {
-			panic(err)
+			log.Fatalf("aws client PutRecord() failed: %s\n", err)
+			break
 		}
 	}
 
